@@ -44,7 +44,8 @@ asciiArt =
        \██╔══██║   ██║   ██║     \n\
        \██║  ██║   ██║   ╚██████╗\n\
        \╚═╝  ╚═╝   ╚═╝    ╚═════╝\n\
-       \  Haskell Type Checker   \n"
+       \  Haskell Type Checker   \n\
+       \         v0.1.1.0        \n"
     ++ colorCode "reset"
 
 main :: IO ()

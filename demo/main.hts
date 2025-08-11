@@ -4,6 +4,7 @@ function add(a: number, b: number): number {
 
 function main(): number {
     console.log(add(1, 2));
+    return 0;
 }
 
 main();
