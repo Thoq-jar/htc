@@ -2,34 +2,76 @@ module Main (main) where
 
 import Control.Monad (filterM, forM_, when)
 import Data.List (isPrefixOf, isSuffixOf)
+import Data.Maybe (fromMaybe)
 import System.Directory (doesDirectoryExist, doesFileExist, getModificationTime, listDirectory)
 import System.Environment (getArgs)
 import System.FilePath (replaceExtension, takeExtension, takeFileName, (</>))
 import System.IO (writeFile)
-import TypeChecker
+import TypeChecker (checkTypes, stripTypes)
 
 data CompileMode = Compile | Check | Auto deriving (Eq)
 
+colors :: [(String, String)]
+colors =
+  [ ("reset", "\ESC[0m"),
+    ("black", "\ESC[30m"),
+    ("red", "\ESC[31m"),
+    ("green", "\ESC[32m"),
+    ("yellow", "\ESC[33m"),
+    ("blue", "\ESC[34m"),
+    ("magenta", "\ESC[35m"),
+    ("cyan", "\ESC[36m"),
+    ("white", "\ESC[37m"),
+    ("brightBlack", "\ESC[90m"),
+    ("brightRed", "\ESC[91m"),
+    ("brightGreen", "\ESC[92m"),
+    ("brightYellow", "\ESC[93m"),
+    ("brightBlue", "\ESC[94m"),
+    ("brightMagenta", "\ESC[95m"),
+    ("brightCyan", "\ESC[96m"),
+    ("brightWhite", "\ESC[97m")
+  ]
+
+colorCode :: String -> String
+colorCode name = Data.Maybe.fromMaybe "" (lookup name colors)
+
+asciiArt :: String
+asciiArt =
+  colorCode "brightMagenta"
+    ++ "██╗  ██╗████████╗ ██████╗\n\
+       \██║  ██║╚══██╔══╝██╔════╝\n\
+       \███████║   ██║   ██║     \n\
+       \██╔══██║   ██║   ██║     \n\
+       \██║  ██║   ██║   ╚██████╗\n\
+       \╚═╝  ╚═╝   ╚═╝    ╚═════╝\n\
+       \  Haskell Type Checker   \n"
+    ++ colorCode "reset"
+
 main :: IO ()
 main = do
+  putStrLn asciiArt
+
   args <- getArgs
+  let usage = colorCode "green" ++ "Usage: tsc [--check|--auto] [--exclude folder1 folder2 ...] <file/directory>" ++ colorCode "reset"
+      info msg = putStrLn $ colorCode "brightCyan" ++ msg ++ colorCode "reset"
+      errorMsg msg = putStrLn $ colorCode "brightRed" ++ msg ++ colorCode "reset"
   case args of
-    [path] -> processPath Compile [] path
-    ["--check", path] -> processPath Check [] path
-    ["--auto", path] -> processPath Auto [] path
+    [path] -> info ("Compiling: " ++ path) >> processPath Compile [] path
+    ["--check", path] -> info ("Checking validity of types... [" ++ path ++ "]") >> processPath Check [] path
+    ["--auto", path] -> info ("Auto mode: " ++ path) >> processPath Auto [] path
     ("--exclude" : excludes) ->
       case reverse excludes of
-        (path : restExcludes) -> processPath Compile (reverse restExcludes) path
-        [] -> putStrLn "Usage: tsc [--check|--auto] [--exclude folder1 folder2 ...] <file/directory>"
+        (path : restExcludes) -> info ("Compiling (excluding: " ++ show restExcludes ++ "): " ++ path) >> processPath Compile (reverse restExcludes) path
+        [] -> errorMsg usage
     ("--check" : "--exclude" : excludes) ->
       case reverse excludes of
-        (path : restExcludes) -> processPath Check (reverse restExcludes) path
-        [] -> putStrLn "Usage: tsc [--check|--auto] [--exclude folder1 folder2 ...] <file/directory>"
+        (path : restExcludes) -> info ("Checking validity of types... (excluding: " ++ show restExcludes ++ "): " ++ path) >> processPath Check (reverse restExcludes) path
+        [] -> errorMsg usage
     ("--auto" : "--exclude" : excludes) ->
       case reverse excludes of
-        (path : restExcludes) -> processPath Auto (reverse restExcludes) path
-        [] -> putStrLn "Usage: tsc [--check|--auto] [--exclude folder1 folder2 ...] <file/directory>"
-    _ -> putStrLn "Usage: tsc [--check|--auto] [--exclude folder1 folder2 ...] <file/directory>"
+        (path : restExcludes) -> info ("Auto mode (excluding: " ++ show restExcludes ++ "): " ++ path) >> processPath Auto (reverse restExcludes) path
+        [] -> errorMsg usage
+    _ -> errorMsg usage
 
 processPath :: CompileMode -> [String] -> String -> IO ()
 processPath mode excludes path = do
@@ -51,7 +93,7 @@ processPath mode excludes path = do
 processFile :: String -> IO ()
 processFile file = do
   content <- readFile file
-  let jsOutput = strip_types content
+  let jsOutput = stripTypes content
   case jsOutput of
     ('P' : 'a' : 'r' : 's' : 'e' : ' ' : 'e' : 'r' : 'r' : 'o' : 'r' : ':' : _) ->
       putStrLn $ file ++ ": " ++ jsOutput
@@ -69,10 +111,10 @@ autoProcessFile file = do
       tsTime <- getModificationTime file
       jsTime <- getModificationTime jsFile
       when (tsTime > jsTime) $ do
-        putStrLn $ "T*peScript file is newer, recompiling: " ++ file
+        putStrLn $ "HackScript file is newer, recompiling: " ++ file
         processFile file
     else do
-      putStrLn $ "JavaScript file doesn't exist, compiling: " ++ file
+      putStrLn $ "JS file doesn't exist, compiling: " ++ file
       processFile file
 
 processDirectoryRecursive :: [String] -> String -> IO ()
@@ -92,7 +134,7 @@ autoProcessDirectoryRecursive excludes dir = do
 checkFile :: String -> IO ()
 checkFile file = do
   content <- readFile file
-  putStrLn $ file ++ ": " ++ check_types content
+  putStrLn $ file ++ ": " ++ checkTypes content
 
 checkDirectoryRecursive :: [String] -> String -> IO ()
 checkDirectoryRecursive excludes dir = do
@@ -115,16 +157,15 @@ isExcluded :: [String] -> String -> Bool
 isExcluded excludes path =
   let dirName = takeFileName path
    in any (\exclude -> exclude == dirName || exclude `isPrefixOf` dirName) excludes
-        || any
-          ( \exclude ->
-              "node_modules" `isSuffixOf` path
-                || ".git" `isSuffixOf` path
-                || "dist" `isSuffixOf` path
-                || "build" `isSuffixOf` path
-          )
-          [path]
+        || ( \exclude ->
+               "node_modules" `isSuffixOf` path
+                 || ".git" `isSuffixOf` path
+                 || "dist" `isSuffixOf` path
+                 || "build" `isSuffixOf` path
+           )
+          path
 
 isScriptFile :: String -> IO Bool
 isScriptFile path = do
   isFile <- doesFileExist path
-  return $ isFile && takeExtension path `elem` [".ts", ".tsx"]
+  return $ isFile && takeExtension path `elem` [".ts", ".tsx", ".hts", ".htx"]

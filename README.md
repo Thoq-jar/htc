@@ -1,4 +1,5 @@
-# T*peScript
+# HackScript
 
-This is type-checked javascript,
-nowhere near as many features as ts (by design)
+Haskell Type Checker
+
+This is type-checked js, nothing more, nothing less

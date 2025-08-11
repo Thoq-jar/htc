@@ -2,7 +2,7 @@ function add(a: number, b: number): number {
     return a + b;
 }
 
-function main(): void {
+function main(): number {
     console.log(add(1, 2));
 }
 

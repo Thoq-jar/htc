@@ -1,10 +1,10 @@
-module TypeChecker (check_types, strip_types) where
+module TypeChecker (checkTypes, stripTypes) where
 
 import AST
 import Parser
 
-check_types :: String -> String
-check_types input =
+checkTypes :: String -> String
+checkTypes input =
   case parseProgram input of
     Left err -> "Parse error: " ++ err
     Right stmts ->
@@ -12,8 +12,8 @@ check_types input =
         Left err -> "Type error: " ++ err
         Right _ -> "Type checking passed"
 
-strip_types :: String -> String
-strip_types input =
+stripTypes :: String -> String
+stripTypes input =
   case parseProgram input of
     Left err -> "Parse error: " ++ err
     Right stmts -> generateJS stmts
@@ -74,44 +74,88 @@ typeCheck env (stmt : stmts) =
     Right env' -> typeCheck env' stmts
 
 typeCheckStatement :: TypeEnv -> Statement -> Either String TypeEnv
+isKnownType :: TSType -> Bool
+isKnownType NumberType = True
+isKnownType StringType = True
+isKnownType BooleanType = True
+isKnownType VoidType = True
+isKnownType (FunctionType params ret) = all isKnownType params && isKnownType ret
+isKnownType UnknownType = False
 typeCheckStatement env (VarDecl name Nothing (Just expr)) =
   case inferType env expr of
     Left err -> Left err
-    Right exprType -> Right ((name, exprType) : env)
-typeCheckStatement env (VarDecl name (Just declType) (Just expr)) =
-  case inferType env expr of
-    Left err -> Left err
     Right exprType ->
-      if declType == exprType
-        then Right ((name, declType) : env)
-        else Left $ "Type mismatch: expected " ++ show declType ++ ", got " ++ show exprType
+      if isKnownType exprType
+        then Right ((name, exprType) : env)
+        else Left $ "Unknown type: " ++ show exprType ++ " in variable " ++ name
+typeCheckStatement env (VarDecl name (Just declType) (Just expr)) =
+  if not (isKnownType declType)
+    then Left $ "Unknown declared type: " ++ show declType ++ " in variable " ++ name
+    else case inferType env expr of
+      Left err -> Left err
+      Right exprType ->
+        if declType == exprType
+          then Right ((name, declType) : env)
+          else Left $ "Type mismatch: expected " ++ show declType ++ ", got " ++ show exprType
 typeCheckStatement env (VarDecl name (Just declType) Nothing) =
-  Right ((name, declType) : env)
+  if isKnownType declType
+    then Right ((name, declType) : env)
+    else Left $ "Unknown declared type: " ++ show declType ++ " in variable " ++ name
 typeCheckStatement env (VarDecl name Nothing Nothing) =
   Left $ "Variable " ++ name ++ " declared without type or initializer"
-typeCheckStatement env (FuncDecl name params retType body) =
-  let funcType = FunctionType (map snd params) retType
-      funcEnv = (name, funcType) : env
-      paramEnv = params ++ funcEnv
-   in case typeCheckStatements paramEnv body retType of
-        Left err -> Left err
-        Right _ -> Right ((name, funcType) : env)
+typeCheckStatement env (FuncDecl name params retType body)
+  | not (isKnownType retType) = Left $ "Unknown return type: " ++ show retType ++ " in function " ++ name
+  | not (all (isKnownType . snd) params) = Left $ "Unknown parameter type in function " ++ name
+  | otherwise =
+      let funcType = FunctionType (map snd params) retType
+          funcEnv = (name, funcType) : env
+          paramEnv = params ++ funcEnv
+       in case typeCheckStatements paramEnv body retType of
+            Left err -> Left err
+            Right _ -> Right ((name, funcType) : env)
 typeCheckStatement env (ExprStmt expr) =
   case inferType env expr of
     Left err -> Left err
-    Right _ -> Right env
+    Right exprType ->
+      if isKnownType exprType
+        then Right env
+        else Left $ "Unknown type: " ++ show exprType ++ " in expression statement"
 typeCheckStatement env (ReturnStmt (Just expr)) =
   case inferType env expr of
     Left err -> Left err
-    Right _ -> Right env
+    Right exprType ->
+      if isKnownType exprType
+        then Right env
+        else Left $ "Unknown type: " ++ show exprType ++ " in return statement"
 typeCheckStatement env (ReturnStmt Nothing) = Right env
 
 typeCheckStatements :: TypeEnv -> [Statement] -> TSType -> Either String ()
-typeCheckStatements _ [] _ = Right ()
-typeCheckStatements env (stmt : stmts) expectedReturn =
+typeCheckStatements env stmts expectedReturn =
+  let checkAll = checkAllStatements env stmts expectedReturn
+   in case expectedReturn of
+        VoidType -> checkAll
+        _ ->
+          case findReturn stmts of
+            Nothing -> Left $ "Function is declared to return " ++ show expectedReturn ++ " but does not return a value"
+            Just expr ->
+              case inferType env expr of
+                Left err -> Left err
+                Right t ->
+                  if t == expectedReturn
+                    then checkAll
+                    else Left $ "Function is declared to return " ++ show expectedReturn ++ " but returns " ++ show t
+
+checkAllStatements :: TypeEnv -> [Statement] -> TSType -> Either String ()
+checkAllStatements _ [] _ = Right ()
+checkAllStatements env (stmt : stmts) expectedReturn =
   case typeCheckStatement env stmt of
     Left err -> Left err
-    Right env' -> typeCheckStatements env' stmts expectedReturn
+    Right env' -> checkAllStatements env' stmts expectedReturn
+
+findReturn :: [Statement] -> Maybe Expr
+findReturn [] = Nothing
+findReturn (ReturnStmt (Just expr) : _) = Just expr
+findReturn (_ : rest) = findReturn rest
 
 inferType :: TypeEnv -> Expr -> Either String TSType
 inferType _ (NumberLit _) = Right NumberType

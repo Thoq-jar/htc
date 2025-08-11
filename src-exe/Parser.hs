@@ -30,7 +30,7 @@ tokenize (c : cs)
       let (word, rest) = span (\x -> isAlphaNum x || x == '_') (c : cs)
        in word : tokenize rest
   | otherwise =
-      let (num, rest) = span (\x -> elem x "0123456789.") (c : cs)
+      let (num, rest) = span (`elem` "0123456789.") (c : cs)
        in if not (null num)
             then num : tokenize rest
             else [c] : tokenize cs
@@ -134,8 +134,11 @@ parseExpression (name : "+" : rest) =
     Left err -> Left err
     Right (expr, remaining) -> Right (BinaryOp "+" (Identifier name) expr, remaining)
 parseExpression (name : rest)
-  | all (\c -> elem c "0123456789.") name = Right (NumberLit (read name), rest)
-  | not (null name) && head name == '"' && last name == '"' = Right (StringLit (init (tail name)), rest)
+  | all (`elem` "0123456789.") name = Right (NumberLit (read name), rest)
+  | case name of
+      ('"' : xs) -> not (null xs) && last xs == '"'
+      _ -> False =
+      Right (StringLit (init (drop 1 name)), rest)
   | name == "true" = Right (BooleanLit True, rest)
   | name == "false" = Right (BooleanLit False, rest)
   | otherwise = Right (Identifier name, rest)
